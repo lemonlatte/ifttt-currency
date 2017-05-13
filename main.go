@@ -83,8 +83,8 @@ func pushIFTTTEvent(price float64) error {
 		if r.StatusCode != 200 {
 			return fmt.Errorf("invalid status return of ifttt event call: %s", r.Status)
 		}
+		lastPrice = price
 	}
-	lastPrice = price
 	return nil
 }
 
