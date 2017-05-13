@@ -52,9 +52,9 @@ func pushIFTTTEvent(price float64) error {
 		lastPrice = price
 	}
 
-	priceDiff := price / lastPrice
+	priceDiff := price - lastPrice
 	priceRatio := price / lastPrice
-	if math.Abs(priceRatio) > 5.0 || math.Abs(priceDiff) > 5.0 {
+	if math.Abs(priceRatio) > 5.0 || math.Abs(priceDiff) > 150.0 {
 		changeText := ""
 		if priceRatio > 1 {
 			changeText = "📈"
