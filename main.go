@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -77,7 +78,7 @@ func pushIFTTTEvent(ct CoinType, price, lastPrice float64) error {
 	}
 	postBody := map[string]string{
 		"value1": changeText,
-		"value2": fmt.Sprintf("%0.4f", price),
+		"value2": fmt.Sprintf("%s %0.4f", strings.ToUpper(string(ct)), price),
 		"value3": fmt.Sprintf("%+0.2f", (priceRatio-1)*100),
 	}
 
