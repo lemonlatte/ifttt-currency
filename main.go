@@ -137,12 +137,17 @@ func alertPrice(ct CoinType, percentThreshold, unitThreshold float64) <-chan *Pr
 
 func main() {
 	ethAlert := alertPrice(ETH, 5, 200)
+	btcAlert := alertPrice(BTC, 5, 2000)
 
 	for {
 		select {
 		case <-time.After(EVENT_PUSH_TIMEOUT):
 		case price := <-ethAlert:
 			if err := pushIFTTTEvent(ETH, price.Current, price.Last); err != nil {
+				log.Printf("IFTTT error: %s", err.Error())
+			}
+		case price := <-btcAlert:
+			if err := pushIFTTTEvent(BTC, price.Current, price.Last); err != nil {
 				log.Printf("IFTTT error: %s", err.Error())
 			}
 		}
