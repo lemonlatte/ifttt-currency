@@ -13,16 +13,21 @@ import (
 const IFTTT_TOKEN = ""
 const EVENT_PUSH_TIMEOUT = 6 * time.Hour
 
-var currentPrice = 0.0
-var lastPrice = 0.0
 var cookies []*http.Cookie = []*http.Cookie{}
 
-func requestETHPrice(retry int) (float64, error) {
+type CoinType string
+
+const (
+	BTC = "btc"
+	ETH = "eth"
+)
+
+func requestPrice(ct CoinType, retry int) (float64, error) {
 	if retry == 0 {
 		return 0, fmt.Errorf("retry timeout")
 	}
 
-	req, _ := http.NewRequest("GET", "https://www.maicoin.com/api/prices/eth-usd/", nil)
+	req, _ := http.NewRequest("GET", fmt.Sprintf("https://www.maicoin.com/api/prices/%s-usd/", ct), nil)
 	req.Header.Add("user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36")
 	req.Header.Add("accept", "*/*")
 	req.Header.Add("host", "www.maicoin.com")
@@ -46,7 +51,7 @@ func requestETHPrice(retry int) (float64, error) {
 		cookies = resp.Cookies()
 		time.Sleep(time.Second)
 		log.Printf("parse error. sleep for 1 second. error: %s", err.Error())
-		return requestETHPrice(retry - 1)
+		return requestPrice(ct, retry-1)
 	}
 
 	rawPrice, okKey := v["raw_price_in_twd"]
@@ -62,7 +67,7 @@ func requestETHPrice(retry int) (float64, error) {
 	return price, nil
 }
 
-func pushIFTTTEvent(price, lastPrice float64) error {
+func pushIFTTTEvent(ct CoinType, price, lastPrice float64) error {
 	priceRatio := price / lastPrice
 	changeText := ""
 	if priceRatio > 1 {
@@ -83,7 +88,8 @@ func pushIFTTTEvent(price, lastPrice float64) error {
 		return err
 	}
 
-	r, err := http.Post(fmt.Sprintf("https://maker.ifttt.com/trigger/ether/with/key/%s", IFTTT_TOKEN),
+	r, err := http.Post(
+		fmt.Sprintf("https://maker.ifttt.com/trigger/%s/with/key/%s", ct, IFTTT_TOKEN),
 		"application/json", &buf)
 	if err != nil {
 		return err
@@ -95,14 +101,20 @@ func pushIFTTTEvent(price, lastPrice float64) error {
 	return nil
 }
 
-func main() {
+type PriceInfo struct {
+	Current float64
+	Last    float64
+}
 
-	priceAlert := make(chan *struct{})
+func alertPrice(ct CoinType, percentThreshold, unitThreshold float64) <-chan *PriceInfo {
+	var currentPrice = 0.0
+	var lastPrice = 0.0
+	ch := make(chan *PriceInfo)
 
-	go func(priceAlert chan<- *struct{}) {
-		var err error
+	var err error
+	go func() {
 		for {
-			currentPrice, err = requestETHPrice(3)
+			currentPrice, err = requestPrice(ct, 3)
 			log.Printf("Current price: %0.4f. Last price: %0.4f", currentPrice, lastPrice)
 			if err != nil {
 				log.Print(err)
@@ -110,23 +122,29 @@ func main() {
 				priceDiff := currentPrice - lastPrice
 				priceRatio := currentPrice / lastPrice
 
-				if math.Abs(priceRatio) > 5.0 || math.Abs(priceDiff) > 150.0 {
+				if math.Abs(priceRatio) > percentThreshold || math.Abs(priceDiff) > unitThreshold {
 					log.Print("The difference of two price exceed the threshold. Push a new event.")
-					priceAlert <- &struct{}{}
+					ch <- &PriceInfo{Current: currentPrice, Last: lastPrice}
+					lastPrice = currentPrice
 				}
 			}
 			time.Sleep(time.Minute)
 		}
-	}(priceAlert)
+	}()
+
+	return ch
+}
+
+func main() {
+	ethAlert := alertPrice(ETH, 5, 200)
 
 	for {
 		select {
 		case <-time.After(EVENT_PUSH_TIMEOUT):
-		case <-priceAlert:
+		case price := <-ethAlert:
+			if err := pushIFTTTEvent(ETH, price.Current, price.Last); err != nil {
+				log.Printf("IFTTT error: %s", err.Error())
+			}
 		}
-		if err := pushIFTTTEvent(currentPrice, lastPrice); err != nil {
-			log.Printf("IFTTT error: %s", err.Error())
-		}
-		lastPrice = currentPrice
 	}
 }
