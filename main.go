@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"math"
@@ -11,7 +12,6 @@ import (
 	"time"
 )
 
-const IFTTT_TOKEN = ""
 const EVENT_PUSH_TIMEOUT = 6 * time.Hour
 
 var cookies []*http.Cookie = []*http.Cookie{}
@@ -68,7 +68,7 @@ func requestPrice(ct CoinType, retry int) (float64, error) {
 	return price, nil
 }
 
-func pushIFTTTEvent(ct CoinType, price, lastPrice float64) error {
+func pushIFTTTEvent(ct CoinType, price, lastPrice float64, iftttToken string) error {
 	priceRatio := price / lastPrice
 	changeText := ""
 	if priceRatio > 1 {
@@ -90,7 +90,7 @@ func pushIFTTTEvent(ct CoinType, price, lastPrice float64) error {
 	}
 
 	r, err := http.Post(
-		fmt.Sprintf("https://maker.ifttt.com/trigger/%s/with/key/%s", ct, IFTTT_TOKEN),
+		fmt.Sprintf("https://maker.ifttt.com/trigger/%s/with/key/%s", ct, iftttToken),
 		"application/json", &buf)
 	if err != nil {
 		return err
@@ -137,6 +137,9 @@ func alertPrice(ct CoinType, percentThreshold, unitThreshold float64) <-chan *Pr
 }
 
 func main() {
+	iftttToken := flag.String("iftttToken", "", "ifttt maker token")
+	flag.Parse()
+
 	ethAlert := alertPrice(ETH, 5, 200)
 	btcAlert := alertPrice(BTC, 5, 2000)
 
@@ -144,11 +147,11 @@ func main() {
 		select {
 		case <-time.After(EVENT_PUSH_TIMEOUT):
 		case price := <-ethAlert:
-			if err := pushIFTTTEvent(ETH, price.Current, price.Last); err != nil {
+			if err := pushIFTTTEvent(ETH, price.Current, price.Last, *iftttToken); err != nil {
 				log.Printf("IFTTT error: %s", err.Error())
 			}
 		case price := <-btcAlert:
-			if err := pushIFTTTEvent(BTC, price.Current, price.Last); err != nil {
+			if err := pushIFTTTEvent(BTC, price.Current, price.Last, *iftttToken); err != nil {
 				log.Printf("IFTTT error: %s", err.Error())
 			}
 		}
