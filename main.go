@@ -110,6 +110,7 @@ type PriceInfo struct {
 func alertPrice(ct CoinType, percentThreshold, unitThreshold float64) <-chan *PriceInfo {
 	var currentPrice = 0.0
 	var lastPrice = 0.0
+	var lastAlert time.Time
 	ch := make(chan *PriceInfo)
 
 	var err error
@@ -125,9 +126,15 @@ func alertPrice(ct CoinType, percentThreshold, unitThreshold float64) <-chan *Pr
 
 				if math.Abs(priceRatio) > percentThreshold || math.Abs(priceDiff) > unitThreshold {
 					log.Print("The difference of two price exceed the threshold. Push a new event.")
-					ch <- &PriceInfo{Current: currentPrice, Last: lastPrice}
-					lastPrice = currentPrice
+				} else if time.Since(lastAlert) > EVENT_PUSH_TIMEOUT {
+					log.Print("The event timeout has reached. Push a new event.")
+				} else {
+					time.Sleep(time.Minute)
+					continue
 				}
+				ch <- &PriceInfo{Current: currentPrice, Last: lastPrice}
+				lastPrice = currentPrice
+				lastAlert = time.Now()
 			}
 			time.Sleep(time.Minute)
 		}
@@ -145,7 +152,6 @@ func main() {
 
 	for {
 		select {
-		case <-time.After(EVENT_PUSH_TIMEOUT):
 		case price := <-ethAlert:
 			if err := pushIFTTTEvent(ETH, price.Current, price.Last, *iftttToken); err != nil {
 				log.Printf("IFTTT error: %s", err.Error())
