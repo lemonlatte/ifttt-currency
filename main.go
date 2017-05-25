@@ -21,11 +21,43 @@ type CoinType string
 const (
 	BTC = "btc"
 	ETH = "eth"
+	ETC = "etc"
 )
 
-func requestPrice(ct CoinType, retry int) (float64, error) {
+func (ct CoinType) String() string {
+	return string(ct)
+}
+
+type PoloniexExchage struct {
+	Last float64 `json:"last,string"`
+}
+
+func requestExchange(ct CoinType) (float64, error) {
+	req, _ := http.NewRequest("GET", "https://poloniex.com/public?command=returnTicker", nil)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("poloniex request error: %s", err.Error())
+	}
+	defer resp.Body.Close()
+	d := json.NewDecoder(resp.Body)
+	v := map[string]PoloniexExchage{}
+
+	err = d.Decode(&v)
+	if err != nil {
+		return 0, err
+	}
+
+	if pe, ok := v["BTC_"+strings.ToUpper(ct.String())]; ok {
+		return pe.Last, nil
+	} else {
+		return 0, fmt.Errorf("no exchange rate for coin type: %s", ct)
+	}
+}
+
+func requestPrice(ct CoinType, retry int) (float64, float64, error) {
 	if retry == 0 {
-		return 0, fmt.Errorf("retry timeout")
+		return 0, 0, fmt.Errorf("retry timeout")
 	}
 
 	req, _ := http.NewRequest("GET", fmt.Sprintf("https://www.maicoin.com/api/prices/%s-usd/", ct), nil)
@@ -40,7 +72,7 @@ func requestPrice(ct CoinType, retry int) (float64, error) {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("maicoin request error: %s", err.Error())
+		return 0, 0, fmt.Errorf("maicoin request error: %s", err.Error())
 	}
 	defer resp.Body.Close()
 
@@ -55,17 +87,27 @@ func requestPrice(ct CoinType, retry int) (float64, error) {
 		return requestPrice(ct, retry-1)
 	}
 
-	rawPrice, okKey := v["raw_price_in_twd"]
+	rawPrice, okKey := v["raw_price"]
 	if !okKey {
-		return 0, fmt.Errorf("missing field")
+		return 0, 0, fmt.Errorf("missing field1")
 	}
-
 	price, okVal := rawPrice.(float64)
 	if !okVal {
-		return 0, fmt.Errorf("incorrect price type")
+		return 0, 0, fmt.Errorf("incorrect price type1")
 	}
+
+	rawTWPrice, okKey := v["raw_price_in_twd"]
+	if !okKey {
+		return 0, 0, fmt.Errorf("missing field2")
+	}
+	twPrice, okVal := rawTWPrice.(float64)
+	if !okVal {
+		return 0, 0, fmt.Errorf("incorrect price type2")
+	}
+
 	price /= 100000
-	return price, nil
+	twPrice /= 100000
+	return twPrice, price, nil
 }
 
 func pushIFTTTEvent(ct CoinType, price, lastPrice float64, iftttToken string) error {
@@ -116,11 +158,22 @@ func alertPrice(ct CoinType, percentThreshold, unitThreshold float64) <-chan *Pr
 	var err error
 	go func() {
 		for {
-			currentPrice, err = requestPrice(ct, 3)
-			log.Printf("Current price: %0.4f. Last price: %0.4f", currentPrice, lastPrice)
+			switch ct {
+			case BTC, ETH:
+				currentPrice, _, err = requestPrice(ct, 3)
+			case ETC:
+				var btcPrice, currentExchange float64
+				currentExchange, err = requestExchange(ct)
+				if err == nil {
+					_, btcPrice, err = requestPrice(BTC, 3)
+					currentPrice = btcPrice * currentExchange
+				}
+			}
 			if err != nil {
 				log.Print(err)
 			} else {
+				log.Printf("Current price: %0.4f. Last price: %0.4f", currentPrice, lastPrice)
+
 				priceDiff := currentPrice - lastPrice
 				priceRatio := currentPrice / lastPrice
 
@@ -149,6 +202,7 @@ func main() {
 
 	ethAlert := alertPrice(ETH, 5, 200)
 	btcAlert := alertPrice(BTC, 5, 2000)
+	etcAlert := alertPrice(ETC, 5, 150)
 
 	for {
 		select {
@@ -158,6 +212,10 @@ func main() {
 			}
 		case price := <-btcAlert:
 			if err := pushIFTTTEvent(BTC, price.Current, price.Last, *iftttToken); err != nil {
+				log.Printf("IFTTT error: %s", err.Error())
+			}
+		case price := <-etcAlert:
+			if err := pushIFTTTEvent(ETC, price.Current, price.Last, *iftttToken); err != nil {
 				log.Printf("IFTTT error: %s", err.Error())
 			}
 		}
