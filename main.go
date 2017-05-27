@@ -200,9 +200,9 @@ func main() {
 	iftttToken := flag.String("iftttToken", "", "ifttt maker token")
 	flag.Parse()
 
-	ethAlert := alertPrice(ETH, 5, 200)
-	btcAlert := alertPrice(BTC, 5, 2000)
-	etcAlert := alertPrice(ETC, 5, 150)
+	ethAlert := alertPrice(ETH, 0.05, 250)
+	btcAlert := alertPrice(BTC, 0.05, 2500)
+	etcAlert := alertPrice(ETC, 0.05, 50)
 
 	for {
 		select {
