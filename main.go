@@ -110,7 +110,7 @@ func requestPrice(ct CoinType, retry int) (float64, float64, error) {
 	return twPrice, price, nil
 }
 
-func pushIFTTTEvent(ct CoinType, price, lastPrice float64, iftttToken string) error {
+func pushIFTTTEvent(ct CoinType, price, lastPrice, priceUSD float64, iftttToken string) error {
 	priceRatio := price / lastPrice
 	changeText := ""
 	if priceRatio > 1 {
@@ -120,7 +120,7 @@ func pushIFTTTEvent(ct CoinType, price, lastPrice float64, iftttToken string) er
 	}
 	postBody := map[string]string{
 		"value1": changeText,
-		"value2": fmt.Sprintf("%s %0.4f", strings.ToUpper(string(ct)), price),
+		"value2": fmt.Sprintf("%s %0.2f [USD %.2f]", strings.ToUpper(string(ct)), price, priceUSD),
 		"value3": fmt.Sprintf("%+0.2f", (priceRatio-1)*100),
 	}
 
@@ -145,13 +145,15 @@ func pushIFTTTEvent(ct CoinType, price, lastPrice float64, iftttToken string) er
 }
 
 type PriceInfo struct {
-	Current float64
-	Last    float64
+	Current    float64
+	CurrentUSD float64
+	Last       float64
 }
 
 func alertPrice(ct CoinType, percentThreshold, unitThreshold float64) <-chan *PriceInfo {
 	var currentPrice = 0.0
 	var lastPrice = 0.0
+	var usdPrice = 0.0
 	var lastAlert time.Time
 	ch := make(chan *PriceInfo)
 
@@ -160,13 +162,14 @@ func alertPrice(ct CoinType, percentThreshold, unitThreshold float64) <-chan *Pr
 		for {
 			switch ct {
 			case BTC, ETH:
-				currentPrice, _, err = requestPrice(ct, 3)
+				currentPrice, usdPrice, err = requestPrice(ct, 3)
 			case ETC:
-				var btcPrice, currentExchange float64
+				var currentExchange float64
 				currentExchange, err = requestExchange(ct)
 				if err == nil {
-					_, btcPrice, err = requestPrice(BTC, 3)
-					currentPrice = btcPrice * currentExchange
+					currentPrice, usdPrice, err = requestPrice(BTC, 3)
+					currentPrice *= currentExchange
+					usdPrice *= currentExchange
 				}
 			}
 			if err != nil {
@@ -176,8 +179,12 @@ func alertPrice(ct CoinType, percentThreshold, unitThreshold float64) <-chan *Pr
 
 				priceDiff := currentPrice - lastPrice
 				priceRatio := currentPrice / lastPrice
-
-				if math.Abs(priceRatio) > percentThreshold || math.Abs(priceDiff) > unitThreshold {
+				percentDiff := math.Abs(priceRatio - 1)
+				if lastPrice == 0 {
+					lastPrice = currentPrice
+					lastAlert = time.Now()
+					continue
+				} else if percentDiff > percentThreshold || math.Abs(priceDiff) > unitThreshold {
 					log.Print("The difference of two price exceed the threshold. Push a new event.")
 				} else if time.Since(lastAlert) > EVENT_PUSH_TIMEOUT {
 					log.Print("The event timeout has reached. Push a new event.")
@@ -185,7 +192,11 @@ func alertPrice(ct CoinType, percentThreshold, unitThreshold float64) <-chan *Pr
 					time.Sleep(time.Minute)
 					continue
 				}
-				ch <- &PriceInfo{Current: currentPrice, Last: lastPrice}
+				ch <- &PriceInfo{
+					Current:    currentPrice,
+					Last:       lastPrice,
+					CurrentUSD: usdPrice,
+				}
 				lastPrice = currentPrice
 				lastAlert = time.Now()
 			}
@@ -207,15 +218,15 @@ func main() {
 	for {
 		select {
 		case price := <-ethAlert:
-			if err := pushIFTTTEvent(ETH, price.Current, price.Last, *iftttToken); err != nil {
+			if err := pushIFTTTEvent(ETH, price.Current, price.Last, price.CurrentUSD, *iftttToken); err != nil {
 				log.Printf("IFTTT error: %s", err.Error())
 			}
 		case price := <-btcAlert:
-			if err := pushIFTTTEvent(BTC, price.Current, price.Last, *iftttToken); err != nil {
+			if err := pushIFTTTEvent(BTC, price.Current, price.Last, price.CurrentUSD, *iftttToken); err != nil {
 				log.Printf("IFTTT error: %s", err.Error())
 			}
 		case price := <-etcAlert:
-			if err := pushIFTTTEvent(ETC, price.Current, price.Last, *iftttToken); err != nil {
+			if err := pushIFTTTEvent(ETC, price.Current, price.Last, price.CurrentUSD, *iftttToken); err != nil {
 				log.Printf("IFTTT error: %s", err.Error())
 			}
 		}
